@@ -1,0 +1,48 @@
+version: 0.2
+
+# CodeBuild project requirements:
+#  - Environment image: aws/codebuild/standard:7.0 (Ubuntu)
+#  - "Privileged" mode ENABLED (needed to run the Docker daemon)
+#  - Service role must be able to read the SSM parameters below
+#    (ssm:GetParameters + kms:Decrypt if SecureString uses a CMK)
+
+env:
+  variables:
+    IMAGE_REPO: "ragulgandhi/brain-app1"   # <dockerhub-username>/<repo>
+  parameter-store:
+    DOCKERHUB_USER: "/brain-app/dockerhub/username"
+    DOCKERHUB_PASS: "/brain-app/dockerhub/password"   # store as SecureString
+
+phases:
+  install:
+    runtime-versions:
+      docker: 20
+
+  pre_build:
+    commands:
+      - echo "Logging in to Docker Hub..."
+      - echo "$DOCKERHUB_PASS" | docker login -u "$DOCKERHUB_USER" --password-stdin
+      # Short commit hash used as an immutable image tag
+      - IMAGE_TAG=$(echo "$CODEBUILD_RESOLVED_SOURCE_VERSION" | cut -c 1-7)
+      - echo "Image tag will be $IMAGE_TAG"
+
+  build:
+    commands:
+      - echo "Build started on $(date)"
+      - docker build -t $IMAGE_REPO:latest -t $IMAGE_REPO:$IMAGE_TAG .
+
+  post_build:
+    commands:
+      - echo "Pushing image to Docker Hub..."
+      - docker push $IMAGE_REPO:latest
+      - docker push $IMAGE_REPO:$IMAGE_TAG
+      - echo "Build completed on $(date)"
+      # Optional: write image details for a later deploy stage
+      - printf '[{"name":"brain-app","imageUri":"%s"}]' "$IMAGE_REPO:$IMAGE_TAG" > imagedefinitions.json
+
+artifacts:
+  files:
+    - imagedefinitions.json
+    # Include Kubernetes manifests if you add a deploy stage
+    # - deployment.yaml
+    # - service.yaml
